@@ -80,9 +80,6 @@ def extrair_com_idade():
     if lista_rodada_atual:
         df_novo = pd.DataFrame(lista_rodada_atual)
         
-        # --- LÓGICA DE UNIFICAÇÃO (SOMA E MÉDIA) ---
-        print("📊 Consolidando estatísticas dos jogadores...")
-        
         agg_rules = {col: 'sum' for col in df_novo.columns if col not in ['nome', 'time', 'posicao', 'idade']}
         
         for col_media in ['rating', 'expectedGoals', 'expectedAssists']:
