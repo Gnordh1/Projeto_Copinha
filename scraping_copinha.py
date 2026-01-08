@@ -8,17 +8,13 @@ TOURNAMENT_ID = 10772
 SEASON_ID = 87614
 
 def calcular_idade(timestamp):
-    if not timestamp:
-        return "N/A"
+    if not timestamp: return "N/A"
     try:
-        if timestamp > 10000000000: 
-            timestamp = timestamp / 1000
+        if timestamp > 10000000000: timestamp = timestamp / 1000
         nascimento = datetime.fromtimestamp(timestamp)
         hoje = datetime(2026, 1, 5) 
-        idade = hoje.year - nascimento.year - ((hoje.month, hoje.day) < (nascimento.month, nascimento.day))
-        return idade
-    except Exception as e:
-        return "Erro"
+        return hoje.year - nascimento.year - ((hoje.month, hoje.day) < (nascimento.month, nascimento.day))
+    except: return "Erro"
 
 def buscar_ids_e_nomes():
     jogos = []
@@ -26,7 +22,6 @@ def buscar_ids_e_nomes():
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
         try:
-            # Pegando as 3 primeiras rodadas
             for r in range(1, 4):
                 url = f"https://api.sofascore.com/api/v1/unique-tournament/{TOURNAMENT_ID}/season/{SEASON_ID}/events/round/{r}"
                 page.goto(url, wait_until="networkidle")
@@ -38,61 +33,65 @@ def buscar_ids_e_nomes():
         browser.close()
     return jogos
 
-def extrair_com_idade():
+def extrair_consolidado():
     jogos = buscar_ids_e_nomes()
-    print(f"🚀 Iniciando extração e consolidação de {len(jogos)} jogos...")
+    print(f"🚀 Extraindo e unificando {len(jogos)} jogos...")
     
-    lista_rodada_atual = []
+    lista_bruta = []
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context()
-
         for i, jogo in enumerate(jogos):
             page = context.new_page()
             try:
                 page.goto(f"https://api.sofascore.com/api/v1/event/{jogo['id']}/lineups", timeout=60000)
                 data = json.loads(page.locator("body").inner_text())
-                if 'home' not in data: continue
-
                 for lado in ['home', 'away']:
                     for j in data[lado].get('players', []):
-                        stats_brutas = j.get('statistics', {})
-                        if not stats_brutas: continue
-                        
-                        stats_limpas = {k: v for k, v in stats_brutas.items() if not isinstance(v, dict)}
+                        stats = j.get('statistics', {})
+                        if not stats: continue
                         p_info = j.get('player', {})
-                        idade = calcular_idade(p_info.get('dateOfBirthTimestamp'))
                         
                         linha = {
                             'nome': p_info.get('name'),
                             'time': jogo[lado],
                             'posicao': j.get('position') or p_info.get('position', 'N/A'),
-                            'idade': idade,
-                            **stats_limpas
+                            'idade': calcular_idade(p_info.get('dateOfBirthTimestamp')),
+                            **{k: v for k, v in stats.items() if not isinstance(v, dict)}
                         }
-                        lista_rodada_atual.append(linha)
-                print(f"[{i+1}/{len(jogos)}] ✅ Lido: {jogo['home']} x {jogo['away']}")
+                        lista_bruta.append(linha)
+                print(f"[{i+1}/{len(jogos)}] ✅ {jogo['home']} x {jogo['away']}")
             except: continue
             finally: page.close()
         browser.close()
 
-    if lista_rodada_atual:
-        df_novo = pd.DataFrame(lista_rodada_atual)
+    if lista_bruta:
+        df = pd.DataFrame(lista_bruta)
         
-        agg_rules = {col: 'sum' for col in df_novo.columns if col not in ['nome', 'time', 'posicao', 'idade']}
+        # Somamos os minutos por (Nome, Time, Posição)
+        df_posicao = df.groupby(['nome', 'time', 'posicao'])['minutesPlayed'].sum().reset_index()
+        df_posicao_principal = df_posicao.sort_values('minutesPlayed', ascending=False).drop_duplicates(['nome', 'time'])
+        df_posicao_principal = df_posicao_principal[['nome', 'time', 'posicao']].rename(columns={'posicao': 'posicao_final'})
+
+        # Mesclamos a posição definitiva de volta
+        df = df.merge(df_posicao_principal, on=['nome', 'time'])
+
+        # Tudo que não for texto ou metadado será processado
+        cols_metadados = ['nome', 'time', 'posicao', 'posicao_final', 'idade', 'match_id']
+        agg_rules = {col: 'sum' for col in df.columns if col not in cols_metadados}
         
-        for col_media in ['rating', 'expectedGoals', 'expectedAssists']:
-            if col_media in agg_rules:
-                agg_rules[col_media] = 'mean'
-        
-        # Agrupamos por Nome e Time
-        df_consolidado = df_novo.groupby(['nome', 'time', 'posicao', 'idade']).agg(agg_rules).reset_index()
+        # Aplicar médias
+        for col_avg in ['rating', 'expectedGoals', 'expectedAssists']:
+            if col_avg in agg_rules: agg_rules[col_avg] = 'mean'
+
+        df_final = df.groupby(['nome', 'time', 'posicao_final', 'idade']).agg(agg_rules).reset_index()
+        df_final = df_final.rename(columns={'posicao_final': 'posicao'})
 
         conn = sqlite3.connect('copinha_scout_estruturado.db')
-        df_consolidado.to_sql('scouts', conn, if_exists='replace', index=False)
+        df_final.to_sql('scouts', conn, if_exists='replace', index=False)
         conn.close()
-        print(" Banco de Dados atualizado com sucesso!")
+        print(f"💾 Finalizado! {len(df_final)} atletas únicos no banco.")
 
 if __name__ == "__main__":
-    extrair_com_idade()
+    extrair_consolidado()
