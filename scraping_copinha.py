@@ -58,6 +58,7 @@ def extrair_consolidado():
                             'time': jogo[lado],
                             'posicao': j.get('position') or p_info.get('position', 'N/A'),
                             'idade': calcular_idade(p_info.get('dateOfBirthTimestamp')),
+                            'matches': 1, # ADICIONADO: Cada linha de lineup conta como 1 jogo
                             **{k: v for k, v in stats.items() if not isinstance(v, dict)}
                         }
                         lista_bruta.append(linha)
@@ -69,15 +70,15 @@ def extrair_consolidado():
     if lista_bruta:
         df = pd.DataFrame(lista_bruta)
         
-        # Somamos os minutos por (Nome, Time, Posição)
+        # 1. DEFINIR POSIÇÃO POR MINUTOS JOGADOS
         df_posicao = df.groupby(['nome', 'time', 'posicao'])['minutesPlayed'].sum().reset_index()
         df_posicao_principal = df_posicao.sort_values('minutesPlayed', ascending=False).drop_duplicates(['nome', 'time'])
         df_posicao_principal = df_posicao_principal[['nome', 'time', 'posicao']].rename(columns={'posicao': 'posicao_final'})
 
-        # Mesclamos a posição definitiva de volta
+        # 2. UNIFICAR OS DADOS
         df = df.merge(df_posicao_principal, on=['nome', 'time'])
 
-        # Tudo que não for texto ou metadado será processado
+        # 3. REGRAS DE AGREGAÇÃO
         cols_metadados = ['nome', 'time', 'posicao', 'posicao_final', 'idade', 'match_id']
         agg_rules = {col: 'sum' for col in df.columns if col not in cols_metadados}
         
@@ -87,11 +88,17 @@ def extrair_consolidado():
 
         df_final = df.groupby(['nome', 'time', 'posicao_final', 'idade']).agg(agg_rules).reset_index()
         df_final = df_final.rename(columns={'posicao_final': 'posicao'})
+        df_final = df_final.round(2)
+
+        cols = list(df_final.columns)
+        if 'matches' in cols:
+            cols.insert(4, cols.pop(cols.index('matches')))
+            df_final = df_final[cols]
 
         conn = sqlite3.connect('copinha_scout_estruturado.db')
         df_final.to_sql('scouts', conn, if_exists='replace', index=False)
         conn.close()
-        print(f"💾 Finalizado! {len(df_final)} atletas únicos no banco.")
+        print(f"💾 Finalizado! {len(df_final)} atletas únicos no banco com contagem de jogos.")
 
 if __name__ == "__main__":
     extrair_consolidado()
