@@ -83,7 +83,7 @@ def extrair_consolidado():
         agg_rules = {col: 'sum' for col in df.columns if col not in cols_metadados}
         
         # Aplicar médias
-        for col_avg in ['rating', 'expectedGoals', 'expectedAssists']:
+        for col_avg in ['rating']:
             if col_avg in agg_rules: agg_rules[col_avg] = 'mean'
 
         df_final = df.groupby(['nome', 'time', 'posicao_final', 'idade']).agg(agg_rules).reset_index()
