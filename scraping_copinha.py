@@ -12,25 +12,58 @@ def calcular_idade(timestamp):
     try:
         if timestamp > 10000000000: timestamp = timestamp / 1000
         nascimento = datetime.fromtimestamp(timestamp)
-        hoje = datetime(2026, 1, 5) 
+        hoje = datetime(2026, 1, 25) 
         return hoje.year - nascimento.year - ((hoje.month, hoje.day) < (nascimento.month, nascimento.day))
     except: return "Erro"
 
 def buscar_ids_e_nomes():
     jogos = []
+    ids_vistos = set()
+
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
+        page = browser.new_page()       
         try:
-            for r in range(1, 4):
+            for r in [1, 2, 3]:
                 url = f"https://api.sofascore.com/api/v1/unique-tournament/{TOURNAMENT_ID}/season/{SEASON_ID}/events/round/{r}"
-                page.goto(url, wait_until="networkidle")
-                data = json.loads(page.locator("body").inner_text())
-                for e in data.get('events', []):
-                    if e.get('status', {}).get('type') == 'finished':
-                        jogos.append({'id': str(e['id']), 'home': e['homeTeam']['name'], 'away': e['awayTeam']['name']})
-        except: pass
-        browser.close()
+                page.goto(url)
+                try:
+                    data = json.loads(page.locator("body").inner_text())
+                    for e in data.get('events', []):
+                        if e.get('status', {}).get('type') == 'finished':
+                            e_id = str(e['id'])
+                            jogos.append({'id': e_id, 'home': e['homeTeam']['name'], 'away': e['awayTeam']['name']})
+                            ids_vistos.add(e_id)
+                except: continue
+
+            for bloco in range(0, 5): 
+                url_bloco = f"https://api.sofascore.com/api/v1/unique-tournament/{TOURNAMENT_ID}/season/{SEASON_ID}/events/last/{bloco}"
+                page.goto(url_bloco)
+                
+                try:
+                    content = page.locator("body").inner_text()
+                    if not content or content == "{}": break
+                    
+                    data = json.loads(content)
+                    eventos = data.get('events', [])
+                    if not eventos: break
+                    
+                    cont_bloco = 0
+                    for e in eventos:
+                        e_id = str(e['id'])
+                        if e.get('status', {}).get('type') == 'finished' and e_id not in ids_vistos:
+                            jogos.append({'id': e_id, 'home': e['homeTeam']['name'], 'away': e['awayTeam']['name']})
+                            ids_vistos.add(e_id)
+                            cont_bloco += 1
+                    
+                    print(f"📦 Bloco {bloco}: +{cont_bloco} jogos encontrados.")
+                    if cont_bloco == 0 and bloco > 0: break
+                except:
+                    break
+        except Exception as e:
+            print(f"❌ Erro: {e}")
+        finally:
+            browser.close()
     return jogos
 
 def extrair_consolidado():
